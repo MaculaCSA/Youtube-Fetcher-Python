@@ -1,0 +1,7 @@
+# Tokens
+client_secret.json
+*.pickle
+token_*.pickle
+
+# Archivos de Salida
+*.csv
