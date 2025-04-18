@@ -274,6 +274,36 @@ def main():
                 writer.writeheader()
                 writer.writerows(videos_seleccionados)
             print(f"Archivo CSV '{output_filename}' creado con éxito.")
+
+            # --- Encontrar el video con más likes ---
+            video_mas_likes = None
+            max_likes = -1
+
+            for video in videos_seleccionados:
+                try:
+                    # Intentar convertir likes a entero, ignorar si no es posible
+                    likes_actual = int(video['Likes'])
+                    if likes_actual > max_likes:
+                        max_likes = likes_actual
+                        video_mas_likes = video
+                except (ValueError, TypeError):
+                    # Ignorar videos donde 'Likes' no sea un número válido (N/A, Error, etc.)
+                    continue
+
+            if video_mas_likes:
+                titulo = video_mas_likes['Título del video']
+                video_id = video_mas_likes['ID de youtube']
+                likes_num = video_mas_likes['Likes'] # Mostrar el valor original (puede ser string)
+                link = f"https://www.youtube.com/watch?v={video_id}"
+                print("\n--- Vídeo con más likes ---")
+                print(f"Título: {titulo}")
+                print(f"ID: {video_id}")
+                print(f"Likes: {likes_num}")
+                print(f"Enlace: {link}")
+            else:
+                print("\nNo se encontraron vídeos con un número de likes válido para determinar el máximo.")
+            # ------------------------------------
+
         except IOError as e:
             print(f"Error al escribir el archivo CSV '{output_filename}': {e}")
         except Exception as e:
