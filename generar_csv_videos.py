@@ -7,6 +7,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import sys # Para salir si hay errores críticos
+import math # Para calcular lotes
 
 ### CONFIGURACIÓN ###
 CLIENT_SECRETS_FILE = "client_secret.json" # Nombre del archivo descargado (asegúrate que exista)
@@ -17,7 +18,7 @@ API_VERSION = "v3"
 # --- AJUSTE DE AÑO ---
 # Pon el año específico (ej. 2025) o None para obtener todos los años.
 TARGET_YEAR = None
-# TARGET_YEAR = 2025 # Ejemplo para obtener solo los de 2025
+TARGET_YEAR = 2025 # Ejemplo para obtener solo los de 2025
 
 # Nombre del archivo para guardar el token de acceso (evita re-autorizar cada vez)
 TOKEN_PICKLE_FILE = 'token_youtube_readonly.pickle'
@@ -144,6 +145,51 @@ def get_all_videos_from_playlist(youtube, playlist_id):
     print(f"Total de videos recuperados de la playlist: {len(videos)}")
     return videos
 
+def get_video_statistics(youtube, video_ids):
+    """Obtiene estadísticas (como likes) para una lista de IDs de vídeo."""
+    stats = {}
+    # La API permite hasta 50 IDs por solicitud
+    batch_size = 50
+    num_batches = math.ceil(len(video_ids) / batch_size)
+    print(f"\nObteniendo estadísticas para {len(video_ids)} vídeos en {num_batches} lotes...")
+
+    for i in range(num_batches):
+        start_index = i * batch_size
+        end_index = start_index + batch_size
+        batch_ids = video_ids[start_index:end_index]
+        ids_string = ",".join(batch_ids)
+        print(f"Procesando lote {i+1}/{num_batches} ({len(batch_ids)} vídeos)...")
+
+        try:
+            request = youtube.videos().list(
+                part="statistics", # Solo necesitamos las estadísticas
+                id=ids_string
+            )
+            response = request.execute()
+
+            for item in response.get("items", []):
+                video_id = item.get("id")
+                statistics = item.get("statistics", {})
+                # El recuento de 'likes' puede no estar disponible si el propietario los oculta
+                like_count = statistics.get("likeCount", "N/A")
+                if video_id:
+                    stats[video_id] = like_count
+
+        except HttpError as e:
+            print(f"Error HTTP obteniendo estadísticas para lote {i+1}: {e.resp.status} {e.content}")
+            # Marcar los vídeos de este lote como no disponibles
+            for vid in batch_ids:
+                if vid not in stats:
+                    stats[vid] = "Error"
+        except Exception as e:
+            print(f"Error inesperado obteniendo estadísticas para lote {i+1}: {e}")
+            for vid in batch_ids:
+                 if vid not in stats:
+                    stats[vid] = "Error"
+
+    print("Estadísticas de vídeo obtenidas.")
+    return stats
+
 def main():
     """Función principal del script."""
     youtube = get_authenticated_service()
@@ -162,6 +208,20 @@ def main():
         print("No se encontraron videos en la playlist de subidas o hubo un error al recuperarlos.")
         return
 
+    # --- Obtener Estadísticas (Likes) ---
+    all_video_ids = []
+    for item in all_videos_items:
+        video_id = item.get("snippet", {}).get("resourceId", {}).get("videoId")
+        if video_id:
+            all_video_ids.append(video_id)
+
+    video_stats = {}
+    if all_video_ids:
+        video_stats = get_video_statistics(youtube, all_video_ids)
+    else:
+        print("No se encontraron IDs de vídeo válidos para obtener estadísticas.")
+    # ------------------------------------
+
     # Determinar el nombre del archivo de salida basado en TARGET_YEAR
     if TARGET_YEAR is None:
         output_filename = "videos_youtube_all_years.csv"
@@ -170,8 +230,9 @@ def main():
         output_filename = f"videos_youtube_{TARGET_YEAR}.csv"
         print(f"\nFiltrando videos publicados en el año {TARGET_YEAR}...")
 
-    # Filtrar videos (si TARGET_YEAR tiene un valor)
+    # Filtrar videos (si TARGET_YEAR tiene un valor) y añadir likes
     videos_seleccionados = []
+    print("Procesando y filtrando vídeos...")
     for item in all_videos_items:
         snippet = item.get("snippet", {})
         published_at_str = snippet.get("publishedAt")
@@ -187,9 +248,13 @@ def main():
 
             # Aplicar el filtro de año SOLO si TARGET_YEAR no es None
             if TARGET_YEAR is None or published_date.year == TARGET_YEAR:
+                # Obtener los likes del diccionario de estadísticas
+                likes = video_stats.get(video_id, "N/A") # Valor por defecto si no se encontró
+
                 videos_seleccionados.append({
                     'Título del video': title,
-                    'ID de youtube': video_id
+                    'ID de youtube': video_id,
+                    'Likes': likes # Añadir la nueva columna
                 })
 
         except ValueError:
@@ -203,7 +268,8 @@ def main():
         print(f"Escribiendo resultados en '{output_filename}'...")
         try:
             with open(output_filename, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['Título del video', 'ID de youtube']
+                # Actualizar los nombres de campo para incluir 'Likes'
+                fieldnames = ['Título del video', 'ID de youtube', 'Likes']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(videos_seleccionados)
